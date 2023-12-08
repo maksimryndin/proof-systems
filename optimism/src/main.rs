@@ -6,6 +6,9 @@ use kimchi_optimism::{
 };
 use std::{fs::File, io::BufReader, process::ExitCode};
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 pub fn main() -> ExitCode {
     let cli = cannon_cli::main_cli();
 
@@ -33,19 +36,32 @@ pub fn main() -> ExitCode {
     });
 
     let mut po = PreImageOracle::create(&configuration.host);
-    let _child = po.start();
+    let mut child = po.start();
 
     // Initialize some data used for statistical computations
     let start = Start::create(state.step as usize);
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    // Install signal catcher
+    let term = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&term)).unwrap();
+
     let mut env = witness::Env::<ark_bn254::Fq>::create(cannon::PAGE_SIZE as usize, state, po);
 
-    while !env.halt {
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    while !term.load(Ordering::Relaxed) && !env.halt {
         env.step(&configuration, &meta, &start);
     }
 
-    // TODO: Logic
-    ExitCode::FAILURE
+    if !env.halt {
+        // When we're here, we have received a SIGINT
+        let _ = child.kill();
+        // TODO: Logic
+        ExitCode::FAILURE
+    } else {
+        // Consider that reaching env.halt = true is a successful run
+        ExitCode::SUCCESS
+    }
 }
