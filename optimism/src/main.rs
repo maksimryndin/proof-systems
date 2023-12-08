@@ -4,12 +4,14 @@ use kimchi_optimism::{
     mips::witness,
     preimage_oracle::PreImageOracle,
 };
-use std::{fs::File, io::BufReader, process::ExitCode};
-
+use log::debug;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::{fs::File, io::BufReader, process::ExitCode};
 
 pub fn main() -> ExitCode {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
     let cli = cannon_cli::main_cli();
 
     let configuration = cannon_cli::read_configuration(&cli.get_matches());
@@ -41,23 +43,20 @@ pub fn main() -> ExitCode {
     // Initialize some data used for statistical computations
     let start = Start::create(state.step as usize);
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
     // Install signal catcher
     let term = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(signal_hook::consts::SIGTERM, Arc::clone(&term)).unwrap();
 
     let mut env = witness::Env::<ark_bn254::Fq>::create(cannon::PAGE_SIZE as usize, state, po);
 
-    std::thread::sleep(std::time::Duration::from_secs(5));
-
     while !term.load(Ordering::Relaxed) && !env.halt {
         env.step(&configuration, &meta, &start);
     }
 
+    debug!("Killing child with id {}", child.id());
+    let _ = child.kill();
+
     if !env.halt {
-        // When we're here, we have received a SIGINT
-        let _ = child.kill();
         // TODO: Logic
         ExitCode::FAILURE
     } else {
